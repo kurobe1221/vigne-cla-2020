@@ -33,3 +33,6 @@
 
 # BMP
 *.bmp
+
+# TXT
+result*.txt
