@@ -80,7 +80,7 @@ int export_image_to_bmp(char const* const file_name, image_t const* const image)
 int main() {
   // ベースとなる画像オブジェクトの生成
   printf("create image [%s] ... ", BASE_FILE_NAME);
-  image_t* base_image = create_image_by_txt("kitazato_parts_white.txt");
+  image_t* base_image = create_image_by_txt(BASE_FILE_NAME);
   if (base_image == NULL) {
     printf("error\n");
     return -1;
