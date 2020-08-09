@@ -66,20 +66,21 @@ typedef struct {
 //////////////////////////////
 // プロトタイプ宣言
 //////////////////////////////
-image_t* create_image(char const* const file_name);
+image_t* create_image_by_txt(char const* const file_name);
+image_t* create_image_by_bmp(char const* const file_name);
 mosaic_t* create_mosaic(image_t const* const image);
 int export_mosaic_to_txt(char const* const file_name, mosaic_t const* const mosaic);
 int export_mosaic_to_bmp(char const* const file_name, mosaic_t const* const mosaic);
+int export_image_to_txt(char const* const file_name, image_t const* const image);
 int export_image_to_bmp(char const* const file_name, image_t const* const image);
 
 //////////////////////////////
 // エントリーポイント
 //////////////////////////////
 int main() {
-
   // ベースとなる画像オブジェクトの生成
   printf("create image [%s] ... ", BASE_FILE_NAME);
-  image_t* base_image = create_image(BASE_FILE_NAME);
+  image_t* base_image = create_image_by_txt("kitazato_parts_white.txt");
   if (base_image == NULL) {
     printf("error\n");
     return -1;
@@ -88,7 +89,7 @@ int main() {
 
   // 対象となる画像オブジェクトの生成
   printf("create image [%s] ... ", TARGET_FILE_NAME);
-  image_t* target_image = create_image(TARGET_FILE_NAME);
+  image_t* target_image = create_image_by_txt(TARGET_FILE_NAME);
   if (target_image == NULL) {
     free(base_image);
     printf("error\n");
@@ -144,11 +145,9 @@ int main() {
 }
 
 //////////////////////////////
-// 画像オブジェクトの生成
+// TXTから画像オブジェクトの生成
 //////////////////////////////
-image_t* create_image(char const* const file_name) {
-
-  // ファイルオープン
+image_t* create_image_by_txt(char const* const file_name) {
   FILE* fp = fopen(file_name, "r");
   if (fp == NULL) return NULL;
 
@@ -195,10 +194,89 @@ image_t* create_image(char const* const file_name) {
 }
 
 //////////////////////////////
+// BMPから画像オブジェクトの生成
+//////////////////////////////
+image_t* create_image_by_bmp(char const* const file_name) {
+  FILE* fp = fopen(file_name, "rb");
+  if (fp == NULL) return NULL;
+
+  int const bmp_file_header_size = 14;
+  int const bmp_info_header_size = 40;
+  int const bmp_color = 256;
+  int const bmp_color_byte = 4;
+  int const bmp_header_size = bmp_file_header_size + bmp_info_header_size;
+  int const bmp_color_size = bmp_color * bmp_color_byte;
+  int const height = IMAGE_HEIGHT * PARTS_HEIGHT;
+  int const width = IMAGE_WIDTH * PARTS_WIDTH;
+  int const width_align = width + (width % 4);
+
+  // BMPヘッダー読み込み
+  bmp_header_t header;
+  if (fread(&header, bmp_header_size, 1, fp) < 1) {
+    fclose(fp);
+    return NULL;
+  }
+
+  // 画像領域まで移動
+  if (fseek(fp, header.offset, SEEK_SET) != 0) {
+    fclose(fp);
+    return NULL;
+  }
+
+  // バッファ生成
+  uint8_t* buffer = (uint8_t*)malloc(header.image_size);
+  if (buffer == NULL) {
+    fclose(fp);
+    return NULL;
+  }
+
+  // 画像領域読み込み
+  if (fread(buffer, header.image_size, 1, fp) < 1) {
+    free(buffer);
+    fclose(fp);
+    return NULL;
+  }
+  fclose(fp);
+
+  // メモリ確保
+  image_t* image = (image_t*)malloc(sizeof(image_t));
+  if (image == NULL) {
+    free(buffer);
+    fclose(fp);
+    return NULL;
+  }
+
+  // 画像情報の生成
+  for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
+    for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
+      parts_t * const parts = &(image->parts[iy][ix]);
+      parts->no = iy * IMAGE_WIDTH + ix + 1;
+      for (int py = 0; py < PARTS_HEIGHT; ++ py) {
+        for (int px = 0; px < PARTS_WIDTH; ++ px) {
+          int const idx = (IMAGE_HEIGHT - iy - 1) * width_align * PARTS_HEIGHT +
+                          (PARTS_HEIGHT - py - 1) * width_align + ix * PARTS_WIDTH + px;
+          parts->brightness[0][py][px] = buffer[idx];
+        }
+      }
+      // 90度回転した画像情報を生成
+      for (int r = 1; r < ROTATION_SIZE; ++ r) {
+        for (int py = 0; py < PARTS_HEIGHT; ++ py) {
+          for (int px = 0; px < PARTS_WIDTH; ++ px) {
+            parts->brightness[r][PARTS_HEIGHT - px - 1][py] = parts->brightness[r - 1][py][px];
+          }
+        }
+      }
+    }
+  }
+
+  free(buffer);
+  return image;
+}
+
+//////////////////////////////
 // モザイクオブジェクトの生成
 //////////////////////////////
 mosaic_t* create_mosaic(image_t const* const image) {
-
   // メモリ確保
   mosaic_t* mosaic = (mosaic_t*)malloc(sizeof(mosaic_t));
   if (mosaic == NULL) {
@@ -313,6 +391,44 @@ int export_mosaic_to_bmp(char const* const file_name, mosaic_t const* const mosa
   if (fwrite(buffer, buffer_size, 1, fp) < 1) {
     fclose(fp);
     return -1;
+  }
+
+  fclose(fp);
+  return 0;
+}
+
+//////////////////////////////
+// 画像オブジェクトをTXTにエクスポート
+//////////////////////////////
+int export_image_to_txt(char const* const file_name, image_t const* const image) {
+  FILE* fp = fopen(file_name, "w");
+  if (fp == NULL) return -1;
+
+  // ファイル書き込み
+  for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
+    for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
+      parts_t const* const parts = &(image->parts[iy][ix]);
+      if (fprintf(fp, "%d\n", parts->no) < 0) {
+        fclose(fp);
+        return -1;
+      }
+      for (int py = 0; py < PARTS_HEIGHT; ++ py) {
+        if (fprintf(fp, "%d", parts->brightness[0][py][0]) < 0) {
+          fclose(fp);
+          return -1;
+        }
+        for (int px = 1; px < PARTS_WIDTH; ++ px) {
+          if (fprintf(fp, " %d", parts->brightness[0][py][px]) < 0) {
+            fclose(fp);
+            return -1;
+          }
+        }
+        if (fprintf(fp, "\n") < 0) {
+          fclose(fp);
+          return -1;
+        }
+      }
+    }
   }
 
   fclose(fp);
