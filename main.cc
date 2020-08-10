@@ -68,7 +68,8 @@ typedef struct {
 //////////////////////////////
 image_t* create_image_by_txt(char const* const file_name);
 image_t* create_image_by_bmp(char const* const file_name);
-mosaic_t* create_mosaic(image_t const* const image);
+mosaic_t* create_mosaic_by_image(image_t const* const image);
+mosaic_t* create_mosaic_by_txt(char const* const file_name, image_t const* const image);
 int export_mosaic_to_txt(char const* const file_name, mosaic_t const* const mosaic);
 int export_mosaic_to_bmp(char const* const file_name, mosaic_t const* const mosaic);
 int export_image_to_txt(char const* const file_name, image_t const* const image);
@@ -96,10 +97,10 @@ int main() {
     return -1;
   }
   printf("ok\n");
-
+  
   // モザイクオブジェクトの生成
   printf("create mosaic ... ");
-  mosaic_t* mosaic = create_mosaic(base_image);
+  mosaic_t* mosaic = create_mosaic_by_image(base_image);
   if (mosaic == NULL) {
     free(target_image);
     free(base_image);
@@ -274,9 +275,9 @@ image_t* create_image_by_bmp(char const* const file_name) {
 }
 
 //////////////////////////////
-// モザイクオブジェクトの生成
+// 画像オブジェクトからモザイクオブジェクトの生成
 //////////////////////////////
-mosaic_t* create_mosaic(image_t const* const image) {
+mosaic_t* create_mosaic_by_image(image_t const* const image) {
   // メモリ確保
   mosaic_t* mosaic = (mosaic_t*)malloc(sizeof(mosaic_t));
   if (mosaic == NULL) {
@@ -292,6 +293,39 @@ mosaic_t* create_mosaic(image_t const* const image) {
     }
   }
 
+  return mosaic;
+}
+
+//////////////////////////////
+// TXTからモザイクオブジェクトの生成
+//////////////////////////////
+mosaic_t* create_mosaic_by_txt(char const* const file_name, image_t const* const image) {
+  FILE* fp = fopen(file_name, "r");
+  if (fp == NULL) return NULL;
+
+  // メモリ確保
+  mosaic_t* mosaic = (mosaic_t*)malloc(sizeof(mosaic_t));
+  if (mosaic == NULL) {
+    return NULL;
+  }
+
+  // ファイル読み込み
+  for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
+    for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
+      position_t* const position = &(mosaic->position[iy][ix]);
+      int no;
+      if (fscanf(fp, "%d %d", &no, &(position->rotation)) == EOF) {
+        free(mosaic);
+        fclose(fp);
+        return NULL;
+      }
+      int const py = (no - 1) / IMAGE_WIDTH;
+      int const px = (no - 1) % IMAGE_WIDTH;
+      position->parts = &(image->parts[py][px]);
+    }
+  }
+
+  fclose(fp);
   return mosaic;
 }
 
