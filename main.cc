@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 
 //////////////////////////////
 // マクロ・定数
@@ -20,6 +21,7 @@
 typedef struct {
   int no;
   uint8_t brightness[ROTATION_SIZE][PARTS_HEIGHT][PARTS_WIDTH];
+  double normalizing[ROTATION_SIZE][PARTS_HEIGHT][PARTS_WIDTH];
 } parts_t;
 
 typedef struct {
@@ -66,6 +68,7 @@ typedef struct {
 //////////////////////////////
 // プロトタイプ宣言
 //////////////////////////////
+double inner_product(position_t const* const pa, position_t const* const pb);
 image_t* create_image_by_txt(char const* const file_name);
 image_t* create_image_by_bmp(char const* const file_name);
 mosaic_t* create_mosaic_by_image(image_t const* const image);
@@ -146,6 +149,19 @@ int main() {
 }
 
 //////////////////////////////
+// 2 つのパーツの内積を求める
+//////////////////////////////
+double inner_product(position_t const* const pa, position_t const* const pb) {
+  double sum = 0.0;
+  for (int py = 0; py < PARTS_HEIGHT; ++ py) {
+    for (int px = 0; px < PARTS_WIDTH; ++ px) {
+      sum += pa->parts->normalizing[pa->rotation][py][px] * pb->parts->normalizing[pb->rotation][py][px];
+    }
+  }
+  return sum;
+}
+
+//////////////////////////////
 // TXTから画像オブジェクトの生成
 //////////////////////////////
 image_t* create_image_by_txt(char const* const file_name) {
@@ -168,6 +184,7 @@ image_t* create_image_by_txt(char const* const file_name) {
         free(image);
         return NULL;
       }
+      uint64_t sum = 0;
       for (int py = 0; py < PARTS_HEIGHT; ++ py) {
         for (int px = 0; px < PARTS_WIDTH; ++ px) {
           int brightness = 0;
@@ -177,6 +194,7 @@ image_t* create_image_by_txt(char const* const file_name) {
             return NULL;
           }
           parts->brightness[0][py][px] = (uint8_t)brightness;
+          sum += brightness * brightness;
         }
       }
       // 90度回転した画像情報を生成
@@ -184,6 +202,16 @@ image_t* create_image_by_txt(char const* const file_name) {
         for (int py = 0; py < PARTS_HEIGHT; ++ py) {
           for (int px = 0; px < PARTS_WIDTH; ++ px) {
             parts->brightness[r][PARTS_HEIGHT - px - 1][py] = parts->brightness[r - 1][py][px];
+          }
+        }
+      }
+      // ベクトルの長さを求める
+      double const dist = sqrt(sum);
+      // 輝度の正規化
+      for (int r = 0; r < ROTATION_SIZE; ++ r) {
+        for (int py = 0; py < PARTS_HEIGHT; ++ py) {
+          for (int px = 0; px < PARTS_WIDTH; ++ px) {
+            parts->normalizing[r][py][px] = parts->brightness[r][py][px] / dist;
           }
         }
       }
@@ -252,11 +280,14 @@ image_t* create_image_by_bmp(char const* const file_name) {
     for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
       parts_t * const parts = &(image->parts[iy][ix]);
       parts->no = iy * IMAGE_WIDTH + ix + 1;
+      uint64_t sum = 0;
       for (int py = 0; py < PARTS_HEIGHT; ++ py) {
         for (int px = 0; px < PARTS_WIDTH; ++ px) {
           int const idx = (IMAGE_HEIGHT - iy - 1) * width_align * PARTS_HEIGHT +
                           (PARTS_HEIGHT - py - 1) * width_align + ix * PARTS_WIDTH + px;
-          parts->brightness[0][py][px] = buffer[idx];
+          int const brightness = buffer[idx];
+          parts->brightness[0][py][px] = (uint8_t)brightness;
+          sum += brightness * brightness;
         }
       }
       // 90度回転した画像情報を生成
@@ -264,6 +295,16 @@ image_t* create_image_by_bmp(char const* const file_name) {
         for (int py = 0; py < PARTS_HEIGHT; ++ py) {
           for (int px = 0; px < PARTS_WIDTH; ++ px) {
             parts->brightness[r][PARTS_HEIGHT - px - 1][py] = parts->brightness[r - 1][py][px];
+          }
+        }
+      }
+      // ベクトルの長さを求める
+      double const dist = sqrt(sum);
+      // 輝度の正規化
+      for (int r = 0; r < ROTATION_SIZE; ++ r) {
+        for (int py = 0; py < PARTS_HEIGHT; ++ py) {
+          for (int px = 0; px < PARTS_WIDTH; ++ px) {
+            parts->normalizing[r][py][px] = parts->brightness[r][py][px] / dist;
           }
         }
       }
