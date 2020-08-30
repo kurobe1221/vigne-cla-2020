@@ -11,7 +11,7 @@
 #define PARTS_WIDTH 10
 #define ROTATION_SIZE 4
 #define BASE_FILE_NAME "noguchi_parts.txt"
-#define TARGET_FILE_NAME "kitazato_parts.txt"
+#define TARGET_FILE_NAME "kitazato_parts_white.txt"
 #define RESULT_TXT "result.txt"
 #define RESULT_BMP "result.bmp"
 
@@ -22,7 +22,6 @@ typedef struct {
   bool locked;
   int no;
   uint8_t brightness[ROTATION_SIZE][PARTS_HEIGHT][PARTS_WIDTH];
-  double normalizing[ROTATION_SIZE][PARTS_HEIGHT][PARTS_WIDTH];
 } parts_t;
 
 typedef struct {
@@ -78,10 +77,13 @@ typedef struct {
 //////////////////////////////
 // プロトタイプ宣言
 //////////////////////////////
-double inner_product(parts_t const* const pa, position_t const* const pb);
-double inner_product(position_t const* const pa, position_t const* const pb);
+double diff(parts_t const* const pa, position_t const* const pb);
+double diff(position_t const* const pa, position_t const* const pb);
 order_t* create_order_by_asc();
 order_t* create_order_by_desc();
+order_t* create_order_by_center();
+void add_coord(image_t* const image, int dx, int dy);
+void add_brightness(image_t* const image, int value);
 void sort_mosaic(order_t const* const order, image_t* const base_image, image_t* const target_image, mosaic_t* const mosaic);
 bool check_image(image_t const* const image);
 bool check_mosaic(mosaic_t const* const mosaic);
@@ -97,7 +99,7 @@ int export_image_to_bmp(char const* const file_name, image_t const* const image)
 //////////////////////////////
 // エントリーポイント
 //////////////////////////////
-int main() {
+int main(int const argc, char* const argv[]) {
   // ベースとなる画像オブジェクトの生成
   printf("create image [%s] ... ", BASE_FILE_NAME);
   image_t* base_image = create_image_by_txt(BASE_FILE_NAME);
@@ -116,6 +118,20 @@ int main() {
     return -1;
   }
   printf("ok\n");
+
+  // 座標を動かす
+  if (argc > 1) {
+    printf("add coord [x:%s, y:%s] ... ", argv[1], argv[2]);
+    add_coord(target_image, atoi(argv[1]), atoi(argv[2]));
+    printf("ok\n");
+  }
+
+  // 輝度を増加させる
+  if (argc > 3) {
+    printf("add brightness [%s] ... ", argv[3]);
+    add_brightness(target_image, atoi(argv[3]));
+    printf("ok\n");
+  }
   
   // モザイクオブジェクトの生成
   printf("create mosaic ... ");
@@ -131,7 +147,8 @@ int main() {
   // 探索順リストの生成
   printf("create order ... ");
   // order_t* order = create_order_by_asc();
-  order_t* order = create_order_by_desc();
+  // order_t* order = create_order_by_desc();
+  order_t* order = create_order_by_center();
   if (order == NULL) {
     free(mosaic);
     free(target_image);
@@ -203,26 +220,27 @@ int main() {
 }
 
 //////////////////////////////
-// 2 つのパーツの内積を求める
+// 2 つのパーツの差異を数値化
 //////////////////////////////
-double inner_product(parts_t const* const pa, position_t const* const pb) {
+double diff(parts_t const* const pa, position_t const* const pb) {
   position_t position;
   position.rotation = 0;
   position.parts = pa;
-  return inner_product(&position, pb);
+  return diff(&position, pb);
 }
 
 //////////////////////////////
-// 2 つのパーツの内積を求める
+// 2 つのパーツの差異を数値化
 //////////////////////////////
-double inner_product(position_t const* const pa, position_t const* const pb) {
-  double sum = 0.0;
+double diff(position_t const* const pa, position_t const* const pb) {
+  uint64_t sum = 0;
   for (int py = 0; py < PARTS_HEIGHT; ++ py) {
     for (int px = 0; px < PARTS_WIDTH; ++ px) {
-      sum += pa->parts->normalizing[pa->rotation][py][px] * pb->parts->normalizing[pb->rotation][py][px];
+      uint64_t const dist = pa->parts->brightness[pa->rotation][py][px] - pb->parts->brightness[pb->rotation][py][px];
+      sum += dist * dist;
     }
   }
-  return sum;
+  return sqrt(sum);
 }
 
 //////////////////////////////
@@ -272,6 +290,95 @@ order_t* create_order_by_desc() {
 }
 
 //////////////////////////////
+// 探索順リストの生成(中心から)
+//////////////////////////////
+order_t* create_order_by_center() {
+  // メモリ確保
+  order_t* order = (order_t*)malloc(sizeof(order_t));
+  if (order == NULL) {
+    return NULL;
+  }
+  bool exist[IMAGE_HEIGHT][IMAGE_WIDTH] = { false };
+  int idx = 0;
+  for (int m = (IMAGE_HEIGHT >> 1) - 1; m >= 0; -- m) {
+    for (int iy = m; iy < IMAGE_HEIGHT - m; ++ iy) {
+      for (int ix = m; ix < IMAGE_WIDTH - m; ++ ix) {
+        if (!exist[iy][ix]) {
+          exist[iy][ix] = true;
+          coord_t coord;
+          coord.x = ix;
+          coord.y = iy;
+          order->coord[idx ++] = coord;
+        }
+      }
+    }
+  }
+  return order;
+}
+
+//////////////////////////////
+// 座標を動かす
+//////////////////////////////
+void add_coord(image_t* const image, int dx, int dy) {
+  // dx %= PARTS_HEIGHT;
+  // dy %= PARTS_HEIGHT;
+  for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
+    for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
+      for (int r = 0; r < ROTATION_SIZE; ++ r) {
+        for (int py = 0; py < PARTS_HEIGHT; ++ py) {
+          for (int px = 0; px < PARTS_WIDTH; ++ px) {
+            int iy2 = iy;
+            int py2 = py + dy;
+            if (py2 >= PARTS_HEIGHT) {
+              py2 -= PARTS_HEIGHT;
+              if (++ iy2 >= IMAGE_HEIGHT) continue;
+            } else if (py2 < 0) {
+              py2 += PARTS_HEIGHT;
+              if (-- iy2 < 0) continue;
+            }
+            int ix2 = ix;
+            int px2 = px + dx;
+            if (px2 >= PARTS_WIDTH) {
+              px2 -= PARTS_WIDTH;
+              if (++ ix2 >= IMAGE_WIDTH) continue;
+            } else if (px2 < 0) {
+              px2 += PARTS_WIDTH;
+              if (-- ix2 < 0) continue;
+            }
+            image->parts[iy2][ix2].brightness[r][py2][px2] = image->parts[iy][ix].brightness[r][py][px];
+          }
+        }
+      }
+    }
+  }
+}
+
+//////////////////////////////
+// 輝度を増やす
+//////////////////////////////
+void add_brightness(image_t* const image, int value) {
+  for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
+    for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
+      parts_t* const parts = &image->parts[iy][ix];
+      for (int r = 0; r < ROTATION_SIZE; ++ r) {
+        for (int py = 0; py < PARTS_HEIGHT; ++ py) {
+          for (int px = 0; px < PARTS_WIDTH; ++ px) {
+            int brightness = parts->brightness[r][py][px];
+            brightness += value;
+            if (brightness < 0) {
+              brightness = 0;
+            } else if (brightness > 255) {
+              brightness = 255;
+            }
+            parts->brightness[r][py][px] = (uint8_t)brightness;
+          }
+        }
+      }
+    }
+  }
+}
+
+//////////////////////////////
 // モザイクの並び替え
 //////////////////////////////
 void sort_mosaic(order_t const* const order, image_t* const base_image, image_t* const target_image, mosaic_t* const mosaic) {
@@ -284,8 +391,8 @@ void sort_mosaic(order_t const* const order, image_t* const base_image, image_t*
       printf("parts[%d][%d] is locked.\n", coord.y, coord.x);
       return;
     }
-    // 最も内積が大きいパーツを探索
-    double best_value = -1.0;
+    // 最も差分が小さいパーツを探索
+    double best_value = 100000;
     int best_rotation = 0;
     parts_t* best_parts = NULL;
     for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
@@ -296,8 +403,8 @@ void sort_mosaic(order_t const* const order, image_t* const base_image, image_t*
         position.parts = base_parts;
         for (int r = 0; r < ROTATION_SIZE; ++ r) {
           position.rotation = r;
-          double const value = inner_product(target_parts, &position);
-          if (value > best_value) {
+          double const value = diff(target_parts, &position);
+          if (value < best_value) {
             best_value = value;
             best_rotation = r;
             best_parts = base_parts;
@@ -333,7 +440,7 @@ bool check_image(image_t const* const image) {
 // モザイクに全てのパーツが使用されているかチェック
 //////////////////////////////
 bool check_mosaic(mosaic_t const* const mosaic) {
-  bool exist[IMAGE_HEIGHT * IMAGE_WIDTH];
+  bool exist[IMAGE_HEIGHT * IMAGE_WIDTH] = { false };
   for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
     for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
       exist[mosaic->position[iy][ix].parts->no - 1] = true;
@@ -371,7 +478,6 @@ image_t* create_image_by_txt(char const* const file_name) {
         free(image);
         return NULL;
       }
-      uint64_t sum = 0;
       for (int py = 0; py < PARTS_HEIGHT; ++ py) {
         for (int px = 0; px < PARTS_WIDTH; ++ px) {
           int brightness = 0;
@@ -381,7 +487,6 @@ image_t* create_image_by_txt(char const* const file_name) {
             return NULL;
           }
           parts->brightness[0][py][px] = (uint8_t)brightness;
-          sum += brightness * brightness;
         }
       }
       // 90度回転した画像情報を生成
@@ -389,16 +494,6 @@ image_t* create_image_by_txt(char const* const file_name) {
         for (int py = 0; py < PARTS_HEIGHT; ++ py) {
           for (int px = 0; px < PARTS_WIDTH; ++ px) {
             parts->brightness[r][PARTS_HEIGHT - px - 1][py] = parts->brightness[r - 1][py][px];
-          }
-        }
-      }
-      // ベクトルの長さを求める
-      double const dist = sqrt(sum);
-      // 輝度の正規化
-      for (int r = 0; r < ROTATION_SIZE; ++ r) {
-        for (int py = 0; py < PARTS_HEIGHT; ++ py) {
-          for (int px = 0; px < PARTS_WIDTH; ++ px) {
-            parts->normalizing[r][py][px] = parts->brightness[r][py][px] / dist;
           }
         }
       }
@@ -468,14 +563,12 @@ image_t* create_image_by_bmp(char const* const file_name) {
       parts_t * const parts = &(image->parts[iy][ix]);
       parts->locked = false;
       parts->no = iy * IMAGE_WIDTH + ix + 1;
-      uint64_t sum = 0;
       for (int py = 0; py < PARTS_HEIGHT; ++ py) {
         for (int px = 0; px < PARTS_WIDTH; ++ px) {
           int const idx = (IMAGE_HEIGHT - iy - 1) * width_align * PARTS_HEIGHT +
                           (PARTS_HEIGHT - py - 1) * width_align + ix * PARTS_WIDTH + px;
           int const brightness = buffer[idx];
           parts->brightness[0][py][px] = (uint8_t)brightness;
-          sum += brightness * brightness;
         }
       }
       // 90度回転した画像情報を生成
@@ -483,16 +576,6 @@ image_t* create_image_by_bmp(char const* const file_name) {
         for (int py = 0; py < PARTS_HEIGHT; ++ py) {
           for (int px = 0; px < PARTS_WIDTH; ++ px) {
             parts->brightness[r][PARTS_HEIGHT - px - 1][py] = parts->brightness[r - 1][py][px];
-          }
-        }
-      }
-      // ベクトルの長さを求める
-      double const dist = sqrt(sum);
-      // 輝度の正規化
-      for (int r = 0; r < ROTATION_SIZE; ++ r) {
-        for (int py = 0; py < PARTS_HEIGHT; ++ py) {
-          for (int px = 0; px < PARTS_WIDTH; ++ px) {
-            parts->normalizing[r][py][px] = parts->brightness[r][py][px] / dist;
           }
         }
       }
