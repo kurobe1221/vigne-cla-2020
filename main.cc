@@ -19,6 +19,7 @@
 // 型定義
 //////////////////////////////
 typedef struct {
+  bool locked;
   int no;
   uint8_t brightness[ROTATION_SIZE][PARTS_HEIGHT][PARTS_WIDTH];
   double normalizing[ROTATION_SIZE][PARTS_HEIGHT][PARTS_WIDTH];
@@ -36,6 +37,15 @@ typedef struct {
 typedef struct {
   position_t position[IMAGE_HEIGHT][IMAGE_WIDTH];
 } mosaic_t;
+
+typedef struct {
+  int x;
+  int y;
+} coord_t;
+
+typedef struct {
+  coord_t coord[IMAGE_HEIGHT * IMAGE_WIDTH];
+} order_t;
 
 #pragma pack(2)
 typedef struct {
@@ -68,7 +78,13 @@ typedef struct {
 //////////////////////////////
 // プロトタイプ宣言
 //////////////////////////////
+double inner_product(parts_t const* const pa, position_t const* const pb);
 double inner_product(position_t const* const pa, position_t const* const pb);
+order_t* create_order_by_asc();
+order_t* create_order_by_desc();
+void sort_mosaic(order_t const* const order, image_t* const base_image, image_t* const target_image, mosaic_t* const mosaic);
+bool check_image(image_t const* const image);
+bool check_mosaic(mosaic_t const* const mosaic);
 image_t* create_image_by_txt(char const* const file_name);
 image_t* create_image_by_bmp(char const* const file_name);
 mosaic_t* create_mosaic_by_image(image_t const* const image);
@@ -112,16 +128,52 @@ int main() {
   }
   printf("ok\n");
 
-  // サンプル
-  position_t temp;
-  temp = mosaic->position[0][0];
-  mosaic->position[0][0] = mosaic->position[19][19];
-  mosaic->position[19][19] = temp;
-  mosaic->position[0][1].rotation = 1;
+  // 探索順リストの生成
+  printf("create order ... ");
+  // order_t* order = create_order_by_asc();
+  order_t* order = create_order_by_desc();
+  if (order == NULL) {
+    free(mosaic);
+    free(target_image);
+    free(base_image);
+    printf("error\n");
+    return -1;
+  }
+  printf("ok\n");
+
+  // モザイクの並び替え
+  printf("sort mosaic ... ");
+  sort_mosaic(order, base_image, target_image, mosaic);
+  printf("ok\n");
+
+  // 画像オブジェクトが全て使用されたかチェック
+  printf("check image ... ");
+  if (!check_image(base_image) || !check_image(target_image)) {
+    free(order);
+    free(mosaic);
+    free(target_image);
+    free(base_image);
+    printf("error\n");
+    return -1;
+  }
+  printf("ok\n");
+
+  // モザイクに全てのパーツが使用されているかチェック
+  printf("check mosaic ... ");
+  if (!check_mosaic(mosaic)) {
+    free(order);
+    free(mosaic);
+    free(target_image);
+    free(base_image);
+    printf("error\n");
+    return -1;
+  }
+  printf("ok\n");
 
   // TXTにエクスポート
   printf("export txt [%s] ... ", RESULT_TXT);
   if(export_mosaic_to_txt(RESULT_TXT, mosaic) < 0) {
+    free(order);
     free(mosaic);
     free(target_image);
     free(base_image);
@@ -133,6 +185,7 @@ int main() {
   // BMPにエクスポート
   printf("export bmp [%s] ... ", RESULT_BMP);
   if(export_mosaic_to_bmp(RESULT_BMP, mosaic) < 0) {
+    free(order);
     free(mosaic);
     free(target_image);
     free(base_image);
@@ -142,10 +195,21 @@ int main() {
   printf("ok\n");
 
   // メモリ開放
+  free(order);
   free(mosaic);
   free(target_image);
   free(base_image);
   return 0;
+}
+
+//////////////////////////////
+// 2 つのパーツの内積を求める
+//////////////////////////////
+double inner_product(parts_t const* const pa, position_t const* const pb) {
+  position_t position;
+  position.rotation = 0;
+  position.parts = pa;
+  return inner_product(&position, pb);
 }
 
 //////////////////////////////
@@ -159,6 +223,128 @@ double inner_product(position_t const* const pa, position_t const* const pb) {
     }
   }
   return sum;
+}
+
+//////////////////////////////
+// 探索順リストの生成(昇順)
+//////////////////////////////
+order_t* create_order_by_asc() {
+  // メモリ確保
+  order_t* order = (order_t*)malloc(sizeof(order_t));
+  if (order == NULL) {
+    return NULL;
+  }
+
+  int idx = 0;
+  for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
+    for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
+      coord_t coord;
+      coord.x = ix;
+      coord.y = iy;
+      order->coord[idx ++] = coord;
+    }
+  }
+
+  return order;
+}
+
+//////////////////////////////
+// 探索順リストの生成(降順)
+//////////////////////////////
+order_t* create_order_by_desc() {
+  // メモリ確保
+  order_t* order = (order_t*)malloc(sizeof(order_t));
+  if (order == NULL) {
+    return NULL;
+  }
+
+  int idx = IMAGE_HEIGHT * IMAGE_WIDTH - 1;
+  for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
+    for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
+      coord_t coord;
+      coord.x = ix;
+      coord.y = iy;
+      order->coord[idx --] = coord;
+    }
+  }
+
+  return order;
+}
+
+//////////////////////////////
+// モザイクの並び替え
+//////////////////////////////
+void sort_mosaic(order_t const* const order, image_t* const base_image, image_t* const target_image, mosaic_t* const mosaic) {
+  // 与えられた順番にパーツを探索
+  for (int i = 0; i < IMAGE_HEIGHT * IMAGE_WIDTH; ++ i) {
+    coord_t const coord = order->coord[i];
+    parts_t* const target_parts = &target_image->parts[coord.y][coord.x];
+    // 重複していたら終了
+    if (target_parts->locked) {
+      printf("parts[%d][%d] is locked.\n", coord.y, coord.x);
+      return;
+    }
+    // 最も内積が大きいパーツを探索
+    double best_value = -1.0;
+    int best_rotation = 0;
+    parts_t* best_parts = NULL;
+    for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
+      for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
+        parts_t* const base_parts = &base_image->parts[iy][ix];
+        if (base_parts->locked) continue;
+        position_t position;
+        position.parts = base_parts;
+        for (int r = 0; r < ROTATION_SIZE; ++ r) {
+          position.rotation = r;
+          double const value = inner_product(target_parts, &position);
+          if (value > best_value) {
+            best_value = value;
+            best_rotation = r;
+            best_parts = base_parts;
+          }
+        }
+      }
+    }
+    // パーツを確定する
+    position_t position;
+    position.rotation = best_rotation;
+    position.parts = best_parts;
+    mosaic->position[coord.y][coord.x] = position;
+    best_parts->locked = true;
+    target_parts->locked = true;
+  }
+}
+
+//////////////////////////////
+// 画像オブジェクトが全て使用されたかチェック
+//////////////////////////////
+bool check_image(image_t const* const image) {
+  for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
+    for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
+      if (!image->parts[iy][ix].locked) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+//////////////////////////////
+// モザイクに全てのパーツが使用されているかチェック
+//////////////////////////////
+bool check_mosaic(mosaic_t const* const mosaic) {
+  bool exist[IMAGE_HEIGHT * IMAGE_WIDTH];
+  for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
+    for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
+      exist[mosaic->position[iy][ix].parts->no - 1] = true;
+    }
+  }
+  for (int i = 0; i < IMAGE_HEIGHT * IMAGE_WIDTH; ++ i) {
+    if (!exist[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 //////////////////////////////
@@ -179,6 +365,7 @@ image_t* create_image_by_txt(char const* const file_name) {
   for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
     for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
       parts_t* const parts = &(image->parts[iy][ix]);
+      parts->locked = false;
       if (fscanf(fp, "%d", &(parts->no)) == EOF) {
         fclose(fp);
         free(image);
@@ -279,6 +466,7 @@ image_t* create_image_by_bmp(char const* const file_name) {
   for (int iy = 0; iy < IMAGE_HEIGHT; ++ iy) {
     for (int ix = 0; ix < IMAGE_WIDTH; ++ ix) {
       parts_t * const parts = &(image->parts[iy][ix]);
+      parts->locked = false;
       parts->no = iy * IMAGE_WIDTH + ix + 1;
       uint64_t sum = 0;
       for (int py = 0; py < PARTS_HEIGHT; ++ py) {
