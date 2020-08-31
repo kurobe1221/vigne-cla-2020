@@ -11,9 +11,9 @@
 #define PARTS_WIDTH 10
 #define ROTATION_SIZE 4
 #define BASE_FILE_NAME "noguchi_parts.txt"
-#define TARGET_FILE_NAME "kitazato_parts_white.txt"
-#define RESULT_TXT "kitazato_seq.txt"
-#define RESULT_BMP "kitazato_result.bmp"
+#define TARGET_FILE_NAME "jobs.bmp"
+#define RESULT_TXT "jobs_seq.txt"
+#define RESULT_BMP "jobs_result.bmp"
 
 //////////////////////////////
 // 型定義
@@ -111,7 +111,7 @@ int main(int const argc, char* const argv[]) {
 
   // 対象となる画像オブジェクトの生成
   printf("create image [%s] ... ", TARGET_FILE_NAME);
-  image_t* target_image = create_image_by_txt(TARGET_FILE_NAME);
+  image_t* target_image = create_image_by_bmp(TARGET_FILE_NAME);
   if (target_image == NULL) {
     free(base_image);
     printf("error\n");
